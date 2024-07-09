@@ -1,0 +1,78 @@
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from google.cloud import speech_v1p1beta1 as speech
+from googletrans import Translator
+from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
+import os
+
+TOKEN = 'YOUR_BOT_TOKEN'
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'path_to_your_google_cloud_credentials.json'
+
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text('Salom! Menga video yuboring va men uni subtitrlayman.')
+
+def transcribe_audio(audio_path):
+    client = speech.SpeechClient()
+
+    with open(audio_path, 'rb') as audio_file:
+        content = audio_file.read()
+
+    audio = speech.RecognitionAudio(content=content)
+    config = speech.RecognitionConfig(
+        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+        sample_rate_hertz=16000,
+        language_code='en-US'
+    )
+
+    response = client.recognize(config=config, audio=audio)
+
+    transcripts = []
+    for result in response.results:
+        transcripts.append(result.alternatives[0].transcript)
+
+    return ' '.join(transcripts)
+
+def translate_text(text, dest_lang='uz'):
+    translator = Translator()
+    translated = translator.translate(text, dest=dest_lang)
+    return translated.text
+
+def add_subtitles_to_video(video_path, subtitles, output_path):
+    video = VideoFileClip(video_path)
+    subtitle = TextClip(subtitles, fontsize=24, color='white')
+    subtitle = subtitle.set_position(('center', 'bottom')).set_duration(video.duration)
+
+    result = CompositeVideoClip([video, subtitle])
+    result.write_videofile(output_path, codec='libx264')
+
+def video_handler(update: Update, context: CallbackContext):
+    video = update.message.video
+    video_file = video.get_file()
+    file_path = video_file.download()
+    
+    # Audiolarni subtitrlarga aylantirish
+    audio_transcript = transcribe_audio(file_path)
+
+    # O'zbek tiliga tarjima qilish
+    translated_text = translate_text(audio_transcript)
+
+    # Subtitrlangan videoni yaratish
+    output_path = 'subtitled_video.mp4'
+    add_subtitles_to_video(file_path, translated_text, output_path)
+
+    # Yangi videoni foydalanuvchiga yuborish
+    with open(output_path, 'rb') as video_file:
+        update.message.reply_video(video=video_file)
+
+def main():
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(Filters.video, video_handler))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
